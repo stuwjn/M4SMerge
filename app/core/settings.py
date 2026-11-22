@@ -84,14 +84,18 @@ DEFAULTS: dict[str, Any] = {
     "output_dir": "",            # 导出目录（空=系统「视频」）
     "auto_scan_on_start": True,
     "theme": "dark",
-    "compress": False,           # 关=无损直通（推荐）；开=重编码压到 1080p
+    "rename_stamp": True,        # 重命名时默认带上时间戳
+    "renames": {},               # 剪辑目录 -> 手动指定的输出名（刷新/重启都不丢）
 }
 
 
 class Settings:
     def __init__(self, path: Path | None = None) -> None:
         self.path = path or (app_data_dir() / "settings.json")
-        self._data: dict[str, Any] = dict(DEFAULTS)
+        # 浅拷贝会让两个 Settings 实例共享同一个 renames 字典，这里逐项复制容器
+        self._data: dict[str, Any] = {
+            k: (dict(v) if isinstance(v, dict) else list(v) if isinstance(v, list) else v)
+            for k, v in DEFAULTS.items()}
         self.load()
 
     def load(self) -> None:
@@ -114,9 +118,17 @@ class Settings:
                 self._data[key] = ""
         # 布尔项只认真布尔：配置文件里写 "yes" 之类一律退回默认，
         # 免得 bool("no") == True 这种坑。
-        for key in ("compress", "auto_scan_on_start"):
+        for key in ("auto_scan_on_start", "rename_stamp"):
             if not isinstance(self._data.get(key), bool):
                 self._data[key] = DEFAULTS[key]
+        # 改名记录：只留「路径 -> 名字」的字符串对，旧版本/手改的坏值一律丢掉
+        renames = self._data.get("renames")
+        if not isinstance(renames, dict):
+            self._data["renames"] = {}
+        else:
+            clean = {k: v.strip()[:120] for k, v in renames.items()
+                     if isinstance(k, str) and isinstance(v, str) and v.strip()}
+            self._data["renames"] = dict(list(clean.items())[-2000:])
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)

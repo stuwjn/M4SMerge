@@ -56,6 +56,12 @@ class Recording:
     info: MediaInfo | None = None
     thumb: Path | None = None                  # thumbnail.jpg（Steam 现成的封面）
     appid: str = ""                            # 目录名里的 Steam AppID
+    out_title: str = ""                        # 手动指定的输出名（不含扩展名，空=用目录名）
+
+    @property
+    def out_stem(self) -> str:
+        """导出时真正用的文件名主干：手改过的优先，否则沿用剪辑文件夹名。"""
+        return (self.out_title or self.title).strip() or self.title
 
     @property
     def duration(self) -> float:

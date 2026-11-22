@@ -10,7 +10,7 @@ Portable for Windows · No re-encoding · No quality loss
 
 [中文](README.md) · [Generic use](#generic-use) · [Usage](#usage) · [FAQ](#faq) · [Run from source](#run-from-source)
 
-<img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6"> <img alt="version" src="https://img.shields.io/badge/version-1.0.0-335eea"> <img alt="license" src="https://img.shields.io/badge/license-MIT-green"> <img alt="download" src="https://img.shields.io/badge/download-106%20MiB-lightgrey">
+<img alt="platform" src="https://img.shields.io/badge/platform-Windows%2010%20%7C%2011-0078D6"> <img alt="version" src="https://img.shields.io/badge/version-1.01-335eea"> <img alt="license" src="https://img.shields.io/badge/license-MIT-green"> <img alt="download" src="https://img.shields.io/badge/download-Releases-lightgrey">
 
 </div>
 
@@ -101,6 +101,36 @@ itself made no concession to generic use — `scanner.py` still only understands
 | **No overwrites** | Name collisions get `-2`, `-3`, … Existing files are never replaced |
 | **No leftovers** | Intermediate files live only in the app's `temp`, deleted on finish or exit. The recording folder is never written to |
 | **Visible progress** | One card per export in the bottom-right corner; green fades after 3 s, red stays until dismissed |
+| **Name it your way** | Right-click or press `F2` to rename the output; tick the timestamp box and you get `Phantom Blade Zero - 2026-11-22 23-46-00.mp4`. A batch uses each clip's own recording time |
+
+## Performance
+
+Merging decodes nothing: it moves a clip's bytes four times — read the segments, write the
+temp file, read it back, write the final MP4. Throughput is therefore set by the disk;
+the CPU only matters in the re-encode fallback.
+
+The estimates below are anchored on a **measured 570 MB clip merged in 1.23 s**
+(≈ 460 MB/s of output, PCIe 3.0 NVMe, source and destination on the same drive):
+
+| Drive | Rated sequential R/W | Merge throughput (output) | 1 GB clip | 10 GB clip |
+|---|---|---|---|---|
+| SATA SSD | 550 / 500 MB/s | ≈ 230 MB/s | ≈ 4.4 s | ≈ 44 s |
+| PCIe 3.0 NVMe | 3,500 / 3,000 MB/s | ≈ 460 MB/s | ≈ 2.2 s | ≈ 22 s |
+| PCIe 4.0 NVMe | 7,000 / 5,000 MB/s | ≈ 800 MB/s | ≈ 1.3 s | ≈ 13 s |
+| PCIe 5.0 NVMe | 14,000 / 12,000 MB/s | ≈ 1,200 MB/s | ≈ 0.9 s | ≈ 8 s |
+| 7200 rpm HDD | 200 / 180 MB/s | ≈ 90 MB/s | ≈ 11 s | ≈ 1 min 50 s |
+
+- 3.0 → 4.0 is roughly 1.7×, 4.0 → 5.0 only about 1.5×: the bottleneck moves from the drive to ffmpeg's muxing and syscalls, so a faster drive never gets saturated.
+- Keeping source and output on two different drives lets reads and writes overlap — typically 20–40% faster; on one drive they queue behind each other.
+- Times cover the whole export (manifest and segment headers included). Scanning hundreds of clips is a separate job and takes seconds.
+
+**Re-encode fallback** (only when stream copy fails) barely touches the disk; it is CPU-bound:
+1080p60 runs at ~150 fps on an 8-core desktop CPU (≈ 2.5× realtime), so a 10-minute clip takes
+about 4 minutes — roughly 2.5 minutes on 16 cores. PCIe 3.0 / 4.0 / 5.0 differ by less than 5%.
+
+That is also why this app only does lossless merging and offers no "re-encode to 1080p" option:
+once you re-encode, the bottleneck moves from the disk to the CPU, a fast drive buys nothing,
+and you pay for it in quality.
 
 ## How it works
 
@@ -151,6 +181,8 @@ ffprobe reports the same duration as the manifest.
 No installer, no admin rights, no separate FFmpeg — `ffmpeg.exe` and `ffprobe.exe` are bundled.
 
 > A single-file `M4SMerge-single.exe` is also available, at the cost of 2–3 extra seconds on startup.
+>
+> If a release ships source only, build the package yourself with [Build](#build).
 
 ## Usage
 
@@ -160,9 +192,17 @@ No installer, no admin rights, no separate FFmpeg — `ffmpeg.exe` and `ffprobe.
    - Batch: tick the checkboxes (or **全选 / Select all**), then click **导出所选 (N)**
 3. Watch progress on the **导出队列 (Export queue)** tab; click **打开输出目录 (Open output folder)** when done
 
-- Output name = clip folder name, e.g. `clip_413150_20251118_214502.mp4`
+- Output name = clip folder name, e.g. `clip_413150_20251118_214502.mp4` (you can rename it, see below)
 - Default output is your Videos folder; change it once in **设置 (Settings)**
 - Clicking a row only highlights it — no accidental actions
+
+**Rename the output**: right-click any row → **重命名… (Rename…)**, press `F2`, or tick several
+clips and use **重命名** in the bulk bar.
+
+- Type a name and tick **加上时间戳 (add timestamp)** to get `Phantom Blade Zero - 2026-11-22 23-46-00.mp4`
+- With several clips selected the name is shared and each clip uses its own recording time; identical seconds get `-2`, so nothing is overwritten
+- Names are stored in the config and survive refresh and restart; **用回文件夹名 (use the folder name)** resets them
+- Only the output file name changes — the recording folder is never touched
 
 **Nothing found?** A dialog offers three choices:
 
@@ -186,7 +226,7 @@ You can also drag a folder onto the window.
 | `<app>\temp\` | intermediates | deleted on finish / exit, folder removed when empty |
 | `<output>\*.mp4` | the result | permanent |
 | `<app>\logs\export.log` | one JSON object per export, JSON Lines | never rotated, delete manually |
-| `%APPDATA%\M4SMerge\settings.json` | config, ~1 KB | permanent |
+| `%APPDATA%\M4SMerge\settings.json` | config (incl. renamed outputs) | permanent |
 
 The recording folder (`gamerecordings`) is **never written to**. No registry keys, nothing else on the system drive.
 

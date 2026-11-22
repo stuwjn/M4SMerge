@@ -30,13 +30,14 @@ def check(name: str, cond: bool, detail: str = "") -> None:
 def main() -> int:
     print("--- 改名 ---")
     check("应用名是 M4SMerge", APP_NAME == "M4SMerge", APP_NAME)
-    check("版本号是 2.0.0", app_pkg.__version__ == "2.0.0", app_pkg.__version__)
+    check("版本号是 1.01", app_pkg.__version__ == "1.01", app_pkg.__version__)
 
     print()
     print("--- 默认配置 ---")
     d = Path(tempfile.mkdtemp())
     s = Settings(d / "settings.json")
-    check("默认无损（不压缩）", s.get("compress") is False)
+    check("默认带上重命名时间戳", s.get("rename_stamp") is True)
+    check("默认没有改名记录", s.get("renames") == {})
     check("默认启动自动扫描", s.get("auto_scan_on_start") is True)
     check("默认深色", s.get("theme") == "dark")
     check("没有自定义剪辑目录", s.get("scan_roots") == [])
@@ -49,7 +50,9 @@ def main() -> int:
         ("scan_roots", [1, 2, None, "  ", "/x"], ["/x"]),
         ("ffmpeg_dir", 123, ""),
         ("output_dir", {"a": 1}, ""),
-        ("compress", "yes", False),
+        ("rename_stamp", "yes", True),
+        ("renames", ["not", "a", "dict"], {}),
+        ("renames", {"/a": "名字", "/b": "   ", "/c": 5}, {"/a": "名字"}),
     ]
     for key, value, want in cases:
         p = Path(tempfile.mkdtemp()) / "s.json"
@@ -70,10 +73,11 @@ def main() -> int:
     p = Path(tempfile.mkdtemp()) / "s.json"
     s3 = Settings(p)
     s3.set("output_dir", "/tmp/x")
-    s3.set("compress", True)
+    s3.set("renames", {"/x/clip_1": "影之刃零 - 2026-11-22 23-46-00"})
     s3.save()
     s4 = Settings(p)
-    check("存盘后能读回", s4.get("output_dir") == "/tmp/x" and s4.get("compress") is True)
+    check("存盘后能读回", s4.get("output_dir") == "/tmp/x"
+          and s4.get("renames", {}).get("/x/clip_1") == "影之刃零 - 2026-11-22 23-46-00")
     check("存盘是合法 JSON", isinstance(json.loads(p.read_text("utf-8")), dict))
 
     print()
@@ -93,6 +97,10 @@ def main() -> int:
     c = ensure_unique(od / "clip_1.mp4")
     check("第三次加 -3", c.name == "clip_1-3.mp4", c.name)
     check("原有文件没被覆盖", a.read_bytes() == b"x")
+    # 批量导出时文件还没落盘，靠「预占集合」避开同名
+    taken = {od / "clip_9.mp4", od / "clip_9-2.mp4"}
+    d = ensure_unique(od / "clip_9.mp4", taken=taken)
+    check("预占的路径也会跳过", d.name == "clip_9-3.mp4", d.name)
 
     print()
     print("--- 文件名清洗 ---")

@@ -44,17 +44,21 @@ def fmt_mtime(ts: float) -> str:
         return ""
 
 
-def ensure_unique(path: Path) -> Path:
+def ensure_unique(path: Path, taken: set[Path] | None = None) -> Path:
     """不覆盖已有文件：重名时依次追加 -2、-3……
 
     以前用「名字 (1).mp4」，括号在批处理脚本和部分播放器里要转义；
     短横线更省事，也符合常见下载工具的命名习惯。
+
+    `taken` 是本批次已经**预占**的路径：批量导出时文件还没落盘，
+    只查 exists() 会让两条同名剪辑抢同一个文件名。
     """
-    if not path.exists():
+    taken = taken or set()
+    if not path.exists() and path not in taken:
         return path
     stem, suffix, parent = path.stem, path.suffix, path.parent
     for i in range(2, 1000):
         cand = parent / f"{stem}-{i}{suffix}"
-        if not cand.exists():
+        if not cand.exists() and cand not in taken:
             return cand
     return parent / f"{stem}_{id(path)}{suffix}"

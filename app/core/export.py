@@ -1,11 +1,11 @@
 """导出：把一条剪辑合成一个 mp4。
 
-M4SMerge 不做剪切，所以这里只有「整条直通」一条路：
+M4SMerge 不做剪切、也不做「压到 1080p」这类重编码，所以这里只有「整条直通」一条路：
 
     ffmpeg -i <已合并的 fMP4> -map 0:v:0? -map 0:a:0? -c copy -movflags +faststart out.mp4
 
-直通失败（分片编码不规整、时间戳跳变等）时才降级为重编码，
-保证用户不会拿到一个 0 字节的结果。
+直通失败（分片编码不规整、时间戳跳变等）时才降级为原分辨率重编码，
+只为保证用户不会拿到一个 0 字节的结果——它不是可选功能。
 """
 from __future__ import annotations
 
@@ -32,7 +32,6 @@ class ExportJob:
     out: Path
     title: str = ""
     duration: float = 0.0
-    compress: bool = False       # False=无损直通（默认）；True=重编码压到 1080p
     status: str = "pending"      # pending | running | done | failed | canceled
     progress: float = 0.0
     message: str = ""
@@ -87,13 +86,13 @@ class Exporter:
                 "-movflags", "+faststart", "-f", "mp4", str(out)]
 
     def _cmd_reencode(self, src: "Path | str", out: Path) -> list[str]:
+        """兜底：原分辨率重编码。不改尺寸、不压码率，尽量贴近源素材。"""
         venc = self.pick_video_encoder()
         args = ["-i", str(src), "-map", "0:v:0?", "-map", "0:a:0?",
                 "-c:v", venc, "-preset", "veryfast", "-crf", "18",
                 "-pix_fmt", "yuv420p"]
         if venc == "mpeg4":
             args += ["-q:v", "3"]
-        args += ["-vf", "scale='if(gt(iw,1920),1920,iw)':-2"]
         args += ["-c:a", "aac", "-b:a", "192k",
                  "-movflags", "+faststart", "-f", "mp4", str(out)]
         return args
@@ -117,7 +116,7 @@ class Exporter:
         t_start = time.time()
         oplog.log_job(status="start", title=job.title, out=str(job.out),
                       src=str(job.src), duration=round(job.duration, 3),
-                      compress=job.compress, segments=job.segments,
+                      segments=job.segments,
                       src_size=job.src_size, missing=job.missing,
                       ffmpeg=self.ff.ffmpeg)
 
@@ -127,7 +126,7 @@ class Exporter:
             tmp_out = job.out.with_name(f".{job.out.stem}.{int(time.time())}.part")
             try:
                 degraded = False
-                args = (self._cmd_reencode if job.compress else self._cmd_copy)(job.src, tmp_out)
+                args = self._cmd_copy(job.src, tmp_out)
                 t0 = time.time()
                 code, err = self.ff.run(args, duration=job.duration or None,
                                         on_progress=lambda p: report(p, "合并中"),
@@ -135,7 +134,7 @@ class Exporter:
                 elapsed = int((time.time() - t0) * 1000)
                 if code == 130:
                     raise _Canceled
-                if code != 0 and not job.compress:
+                if code != 0:
                     # 直通失败 → 重编码兜底，保证有产物
                     first_error = self._tail(err, code)
                     args2 = self._cmd_reencode(job.src, tmp_out)
@@ -155,16 +154,9 @@ class Exporter:
                     if code2 != 0:
                         raise FFmpegError(self._tail(err2, code2))
                     degraded = True
-                elif code != 0:
-                    oplog.log_slice(job=job.title, out=str(job.out), src=str(job.src),
-                                    stage="reencode", mode="reencode",
-                                    elapsed_ms=elapsed, status="failed",
-                                    cmd=" ".join([self.ff.ffmpeg, *args]),
-                                    error=self._tail(err, code))
-                    raise FFmpegError(self._tail(err, code))
                 else:
                     oplog.log_slice(job=job.title, out=str(job.out), src=str(job.src),
-                                    stage="mux", mode="reencode" if job.compress else "copy",
+                                    stage="mux", mode="copy",
                                     elapsed_ms=elapsed, status="ok",
                                     cmd=" ".join([self.ff.ffmpeg, *args]))
                 tmp_out.replace(job.out)
@@ -206,8 +198,10 @@ class _Canceled(Exception):
     pass
 
 
-def build_output_path(directory: Path, title: str, container: str = "mp4") -> Path:
-    """输出路径：直接用剪辑文件夹名；重名时追加 -2、-3，绝不覆盖。"""
+def build_output_path(directory: Path, title: str, container: str = "mp4",
+                      taken: set[Path] | None = None) -> Path:
+    """输出路径：用手动命名的名字（没改就是剪辑文件夹名）；重名追加 -2、-3，绝不覆盖。"""
     from .utils import safe_filename
 
-    return ensure_unique(Path(directory) / f"{safe_filename(title, 100)}.{container}")
+    return ensure_unique(Path(directory) / f"{safe_filename(title, 100)}.{container}",
+                         taken=taken)

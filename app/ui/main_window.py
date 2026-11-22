@@ -10,18 +10,18 @@ from pathlib import Path
 
 from PySide6.QtCore import QThread, Qt, QTimer, Signal
 from PySide6.QtGui import QKeySequence, QShortcut
-from PySide6.QtWidgets import (QApplication, QFileDialog, QLabel, QMainWindow,
-                               QMessageBox, QPushButton, QStackedWidget,
-                               QVBoxLayout, QWidget)
+from PySide6.QtWidgets import (QApplication, QDialog, QFileDialog, QLabel,
+                               QMainWindow, QMessageBox, QPushButton,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from ..core.export import ExportJob, Exporter, build_output_path
 from ..core.ffmpeg import FFmpeg, FFmpegError
-from ..core.naming import plan_for
+from ..core.naming import plan_for, plan_out_names
 from ..core.recording import Canceled, Preparer, Recording
 from ..core.scanner import Scanner, default_scan_roots, steam_clip_dirs
 from ..core.settings import APP_NAME, Settings, default_output_dir
 from . import theme
-from .dialogs import NamingHelpDialog, SettingsDialog
+from .dialogs import NamingHelpDialog, RenameDialog, SettingsDialog
 from .library import EmptyClipsDialog, LibraryPage
 from .panels import QueuePage
 from .toast import ToastStack
@@ -179,8 +179,10 @@ class MainWindow(QMainWindow):
         self.library.exportRequested.connect(lambda rec: self.export_clips([rec]))
         self.library.exportManyRequested.connect(self.export_clips)
         self.library.namingHelpRequested.connect(self.show_naming_help)
+        self.library.renameRequested.connect(self.rename_clips)
 
         for key, fn in (("F5", lambda: self.start_scan(announce=True)),
+                        ("F2", self.rename_current),
                         ("Ctrl+O", self.pick_folder),
                         ("Ctrl+1", lambda: self.topbar.set_page(PAGE_CLIPS)),
                         ("Ctrl+2", lambda: self.topbar.set_page(PAGE_QUEUE))):
@@ -212,6 +214,7 @@ class MainWindow(QMainWindow):
 
     def _on_scan_done(self, recs: list[Recording], unmatched: list | None = None) -> None:
         self._unmatched = list(unmatched or [])
+        self._apply_saved_renames(recs)
         self.library.set_recordings(recs)
         self.library.set_unmatched(self._unmatched)
         if recs:
@@ -279,15 +282,16 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "无法导出", f"输出目录不可写：{exc}")
             return
 
-        compress = bool(self.settings.get("compress", False))
+        used: set[Path] = set()      # 同一批里两条同名剪辑不能抢同一个文件名
         for rec in recs:
-            out = build_output_path(out_dir, rec.title)
-            job = ExportJob(src="", out=out, title=rec.title, duration=rec.duration,
-                            compress=compress, rec=rec,
+            out = build_output_path(out_dir, rec.out_stem, taken=used)
+            used.add(out)
+            job = ExportJob(src="", out=out, title=rec.out_stem, duration=rec.duration,
+                            rec=rec,
                             segments=len(rec.source_files()),
                             src_size=rec.size, missing=0)
             self.queue.add_job(job)
-            self.toasts.begin(rec.key, rec.title)
+            self.toasts.begin(rec.key, rec.out_stem)
             self.toasts.progress(rec.key, 0.0, "准备中…")
         self.topbar.set_page(PAGE_QUEUE)
         self._ensure_queue_running()
@@ -355,6 +359,54 @@ class MainWindow(QMainWindow):
                 self.preparer.release_path(job.src)
         self._runner_idx.clear()
         QTimer.singleShot(30, self._ensure_queue_running)
+
+    # ---------------- 重命名 ----------------
+    def _apply_saved_renames(self, recs: list[Recording]) -> None:
+        """把上次改过的名字贴回重新扫出来的剪辑上（刷新、重启都不丢）。"""
+        saved = self.settings.get("renames", {}) or {}
+        if not isinstance(saved, dict):
+            return
+        for rec in recs:
+            name = saved.get(str(rec.path))
+            if isinstance(name, str) and name.strip():
+                rec.out_title = name.strip()
+
+    def rename_current(self) -> None:
+        targets = self.library.rename_targets()
+        if targets:
+            self.rename_clips(targets)
+
+    def rename_clips(self, recs: list[Recording]) -> None:
+        """手动改输出文件名；勾了时间戳就拼上这条剪辑的保存时间。"""
+        recs = [r for r in recs if r is not None]
+        if not recs:
+            return
+        dlg = RenameDialog(recs, bool(self.settings.get("rename_stamp", True)), self)
+        if dlg.exec() != QDialog.Accepted:
+            return
+
+        saved = self.settings.get("renames", {})
+        if not isinstance(saved, dict):
+            saved = {}
+        if dlg.restore:
+            for rec in recs:
+                rec.out_title = ""
+                saved.pop(str(rec.path), None)
+        else:
+            base, with_stamp = dlg.values()
+            if not base:
+                return
+            planned = plan_out_names(recs, base, with_stamp)   # 撞名自动 -2
+            for rec in recs:
+                name = planned.get(rec.key)
+                if not name:
+                    continue
+                rec.out_title = name
+                saved[str(rec.path)] = name
+            self.settings.set("rename_stamp", with_stamp)
+        self.settings.set("renames", saved)
+        self.settings.save()
+        self.library.refresh_names()
 
     # ---------------- 其它 ----------------
     def open_settings(self) -> None:

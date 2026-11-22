@@ -21,12 +21,22 @@ from __future__ import annotations
 import re
 import unicodedata
 from dataclasses import dataclass, field
+from datetime import datetime
 from pathlib import Path
 from typing import Iterable
+
+from .utils import safe_filename
 
 M4S_EXT = {".m4s", ".mp4", ".m4v"}
 _NUM_RE = re.compile(r"(\d+)")
 _INIT_RE = re.compile(r"(^|[^a-z])(init|header|moov)([^a-z]|$)", re.I)
+
+#: 输出名里时间戳的格式。Windows 文件名不能带冒号，时分秒用短横线隔开：
+#:     影之刃零 - 2026-11-22 23-46-00
+STAMP_FMT = "%Y-%m-%d %H-%M-%S"
+
+#: 名称与时间戳之间的分隔（前后各一个空格）
+STAMP_JOIN = " - "
 
 #: 一条剪辑的目标形状。逐行给出（树行, 注释），界面按两列渲染，
 #: 纯文本场景再按显示宽度补空格，中文与框线字符宽度不同也不会错位。
@@ -68,6 +78,56 @@ RULES: list[tuple[str, str]] = [
 
 #: 一句话结论，界面与文档共用
 ONE_LINER = "文件名和目录层级照 Steam 的样子摆好，不用改任何设置，重新扫描就能认出来。"
+
+#: 手动重命名的边界：只动输出名，不碰剪辑目录
+RENAME_HINT = "只改输出的文件名，剪辑目录一个字节都不动。"
+
+
+def stamp_text(ts: float) -> str:
+    """把时间戳变成 `2026-11-22 23-46-00`；时间越界时返回空串。"""
+    try:
+        return datetime.fromtimestamp(ts).strftime(STAMP_FMT)
+    except (OSError, ValueError, OverflowError):
+        return ""
+
+
+def compose_out_name(base: str, ts: float, with_stamp: bool, maxlen: int = 100) -> str:
+    """名称 + 可选时间戳 → 可直接当文件名的主干（不含扩展名）。
+
+    先按剩余长度截名称、再拼时间戳：时间戳是这条名字的唯一标识，
+    不能被一刀切掉。
+    """
+    base = safe_filename((base or "").strip(), maxlen)
+    if not with_stamp:
+        return base
+    stamp = stamp_text(ts)
+    if not stamp:
+        return base
+    room = max(8, maxlen - len(STAMP_JOIN) - len(stamp))
+    return f"{safe_filename(base, room)}{STAMP_JOIN}{stamp}"
+
+
+def plan_out_names(recs: Iterable, base: str, with_stamp: bool,
+                   maxlen: int = 100) -> dict[str, str]:
+    """一批剪辑的输出名：名称共用，时间各用各的，撞名自动补 -2。
+
+    返回 {rec.key: 名字}。对话框的预览和真正的导出都走这里，
+    免得「预览一个样、导出来另一个样」。
+    """
+    out: dict[str, str] = {}
+    used: set[str] = set()
+    for rec in sorted(recs, key=lambda r: (getattr(r, "mtime", 0.0),
+                                           getattr(r, "title", ""))):
+        name = compose_out_name(base, getattr(rec, "mtime", 0.0), with_stamp, maxlen)
+        if name in used:
+            for i in range(2, 1000):
+                cand = f"{name}-{i}"
+                if cand not in used:
+                    name = cand
+                    break
+        used.add(name)
+        out[getattr(rec, "key", name)] = name
+    return out
 
 
 def natural_key(name: str) -> tuple:

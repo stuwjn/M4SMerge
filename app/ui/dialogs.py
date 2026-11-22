@@ -1,4 +1,4 @@
-"""设置对话框 + 「认不出的 m4s 怎么改名」说明对话框（浅色极简风）。"""
+"""设置、手动重命名、以及「认不出的 m4s 怎么改名」三个对话框（浅色极简风）。"""
 from __future__ import annotations
 
 from pathlib import Path
@@ -14,6 +14,7 @@ from ..core import naming
 from ..core.naming import RenamePlan
 from ..core.settings import Settings, app_temp_dir, default_output_dir
 from . import theme
+from .widgets import ElidedLabel
 
 
 def section(text: str) -> QLabel:
@@ -202,6 +203,139 @@ class NamingHelpDialog(QDialog):
         self.btn_copy.setEnabled(False)
 
 
+class RenameDialog(QDialog):
+    """手动给输出文件起名：名称 + 可选时间戳。
+
+    只改**输出文件名**，剪辑目录一个字节都不动（原目录是只读的）。
+    多选时一次改一批：名称共用，时间戳各取各自剪辑的保存时间，
+    例如 `影之刃零 - 2026-11-22 23-46-00.mp4`。
+    """
+
+    MAX_PREVIEW = 4
+
+    def __init__(self, recs: list, with_stamp: bool = True,
+                 parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self.recs = list(recs)
+        self.restore = False              # 用户点了「用回文件夹名」
+        n = len(self.recs)
+        self.setWindowTitle("重命名" if n == 1 else f"重命名 {n} 条")
+        self.setMinimumWidth(560)
+
+        root = QVBoxLayout(self)
+        root.setContentsMargins(24, 20, 24, 16)
+        root.setSpacing(10)
+
+        title = QLabel("重命名输出文件")
+        title.setProperty("role", "pageTitle")
+        root.addWidget(title)
+        root.addWidget(hint(naming.RENAME_HINT))
+
+        # 名称：多选时若名字都一样就带出来，否则留空让用户输
+        base = ""
+        if self.recs:
+            first = self.recs[0].out_stem
+            base = first if all(r.out_stem == first for r in self.recs) else ""
+        self.name_edit = QLineEdit(base)
+        self.name_edit.setPlaceholderText("例如：影之刃零")
+        self.name_edit.setClearButtonEnabled(True)
+        self.name_edit.textChanged.connect(self._refresh_preview)
+        root.addWidget(self.name_edit)
+
+        # 时间戳：格式固定，勾了就拼在名称后面
+        self.stamp = QCheckBox("加上时间戳")
+        self.stamp.setChecked(bool(with_stamp))
+        self.stamp.toggled.connect(self._refresh_preview)
+        root.addWidget(self.stamp)
+
+        root.addSpacing(2)
+        lab = QLabel("预览")
+        lab.setProperty("role", "meta")
+        root.addWidget(lab)
+        self.preview = QWidget()
+        self.preview.setObjectName("renamePreview")
+        self.preview.setAttribute(Qt.WA_StyledBackground, True)
+        self.preview.setStyleSheet("QWidget#renamePreview { background: %s; border-radius: 8px; }"
+                                   % theme.current().fill)
+        self.pl = QVBoxLayout(self.preview)
+        self.pl.setContentsMargins(14, 10, 14, 10)
+        self.pl.setSpacing(4)
+        root.addWidget(self.preview)
+
+        self.stamp_hint = hint("")
+        root.addWidget(self.stamp_hint)
+
+        root.addStretch(1)
+        row = QHBoxLayout()
+        row.setSpacing(8)
+        self.btn_restore = QPushButton("用回文件夹名")
+        self.btn_restore.setProperty("ghost", True)
+        self.btn_restore.setCursor(Qt.PointingHandCursor)
+        self.btn_restore.clicked.connect(self._do_restore)
+        row.addWidget(self.btn_restore)
+        row.addStretch(1)
+        self.btn_cancel = QPushButton("取消")
+        self.btn_cancel.setProperty("ghost", True)
+        self.btn_cancel.setCursor(Qt.PointingHandCursor)
+        self.btn_cancel.clicked.connect(self.reject)
+        self.btn_ok = QPushButton("保存")
+        self.btn_ok.setProperty("accent", True)
+        self.btn_ok.setCursor(Qt.PointingHandCursor)
+        self.btn_ok.setDefault(True)
+        self.btn_ok.clicked.connect(self.accept)
+        for b in (self.btn_cancel, self.btn_ok):
+            b.setMinimumWidth(88)
+            row.addWidget(b)
+        root.addLayout(row)
+
+        self._refresh_preview()
+
+    # ---------- 预览 ----------
+    def _refresh_preview(self) -> None:
+        base = self.name_edit.text().strip()
+        stamp = self.stamp.isChecked()
+        self.btn_ok.setEnabled(bool(base))
+        # 与导出走同一套命名规则：预览里带 -2 的，导出就是 -2
+        planned = (naming.plan_out_names(self.recs, base, stamp)
+                   if base and self.recs else {})
+
+        # 每行一个结果：多选时能一眼看出「共用名称、各用各自时间」
+        while self.pl.count():
+            it = self.pl.takeAt(0)
+            w = it.widget()
+            if w is not None:
+                w.deleteLater()
+        # 按时间排：最早的一条拿原名，后面的才带 -2，读起来符合直觉
+        ordered = sorted(self.recs, key=lambda r: (r.mtime, r.title))
+        for rec in ordered[:self.MAX_PREVIEW]:
+            name = planned.get(rec.key, "")
+            lb = ElidedLabel(f"{name}.mp4" if name else "—")
+            lb.setStyleSheet("font-size:12px; color:%s;" %
+                             (theme.current().text if base else theme.current().text_3))
+            lb.setFixedWidth(470)
+            self.pl.addWidget(lb)
+        if len(self.recs) > self.MAX_PREVIEW:
+            more = QLabel("… 其余 %d 条同样规则" % (len(self.recs) - self.MAX_PREVIEW))
+            more.setProperty("role", "meta")
+            more.setStyleSheet("font-size:11.5px;")
+            self.pl.addWidget(more)
+        self.preview.setVisible(bool(self.recs))
+
+        if stamp and base:
+            self.stamp_hint.setText("时间取这条剪辑的保存时间；同一批多选，各用各自的时间。")
+        elif stamp:
+            self.stamp_hint.setText("时间取这条剪辑的保存时间，格式 2026-11-22 23-46-00。")
+        else:
+            self.stamp_hint.setText("不勾时间戳就只用上面的名称；重名时自动加 -2、-3。")
+
+    def _do_restore(self) -> None:
+        self.restore = True
+        self.accept()
+
+    def values(self) -> tuple[str, bool]:
+        return self.name_edit.text().strip(), self.stamp.isChecked()
+
+
 class SettingsDialog(QDialog):
     def __init__(self, settings: Settings, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -255,12 +389,8 @@ class SettingsDialog(QDialog):
         orow.addWidget(self.out_edit, 1)
         orow.addWidget(ob)
         lay.addLayout(orow)
-        lay.addWidget(hint("合并出的 mp4 放这里。文件名沿用剪辑文件夹名，同名时自动加 -2、-3，不覆盖。"))
-
-        self.compress = QCheckBox("压缩体积（重编码到 1080p，会明显变慢）")
-        self.compress.setChecked(bool(settings.get("compress", False)))
-        lay.addWidget(self.compress)
-        lay.addWidget(hint("默认不勾选：直接封装，画质与原始剪辑逐帧一致，速度接近磁盘拷贝。"))
+        lay.addWidget(hint("合并出的 mp4 放这里。文件名沿用剪辑文件夹名（可手动改），"
+                           "同名时自动加 -2、-3，不覆盖。"))
 
         # 剪辑目录
         lay.addSpacing(4)
@@ -341,7 +471,6 @@ class SettingsDialog(QDialog):
         out = self.out_edit.text().strip()
         # 路径不存在时退回默认，避免导出时才发现目录没了
         self.settings.set("output_dir", out if out and Path(out).is_dir() else "")
-        self.settings.set("compress", self.compress.isChecked())
         self.settings.set("scan_roots",
                           [self.roots.item(i).text() for i in range(self.roots.count())])
         self.settings.set("auto_scan_on_start", self.auto_scan.isChecked())

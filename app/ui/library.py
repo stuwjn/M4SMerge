@@ -1,6 +1,8 @@
 """剪辑列表页。
 
-一行一条剪辑：复选框、封面、文件夹名、体积/时长/时间、单条导出按钮。
+一行一条剪辑：复选框、封面、名称、体积/时长/时间、单条导出按钮。
+右键（或 F2）可以手动改输出文件名，勾上时间戳就得到
+「影之刃零 - 2026-11-22 23-46-00.mp4」；剪辑目录本身不动。
 所有耗时动作（扫描、读封面）都不在 GUI 线程里做；封面按「一次一张 +
 让出事件循环」的节奏加载，几百条也不会卡住界面。
 """
@@ -12,7 +14,8 @@ from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QColor, QImageReader, QPainter, QPixmap
 from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-                               QPushButton, QSizePolicy, QVBoxLayout, QWidget)
+                               QMenu, QPushButton, QSizePolicy, QVBoxLayout,
+                               QWidget)
 
 from ..core.recording import Recording
 from ..core.utils import human_duration
@@ -48,6 +51,7 @@ class RecordingRow(QWidget):
     toggled = Signal(str, bool)      # key, checked
     exportOne = Signal(str)          # key
     clickedRow = Signal(str)         # key（只负责高亮，不做动作）
+    menuRequested = Signal(str, object)   # key, 全局坐标（右键）
 
     def __init__(self, rec: Recording, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -73,7 +77,7 @@ class RecordingRow(QWidget):
         box = QVBoxLayout()
         box.setContentsMargins(0, 0, 0, 0)
         box.setSpacing(4)
-        self.title = ElidedLabel(rec.title)
+        self.title = ElidedLabel(rec.out_stem)
         bold(self.title, 15)
         self.meta = ElidedLabel(rec.subtitle)
         self.meta.setProperty("role", "meta")
@@ -98,12 +102,23 @@ class RecordingRow(QWidget):
         self.btn.clicked.connect(lambda: self.exportOne.emit(self.key))
         lay.addWidget(self.btn, 0, Qt.AlignVCenter)
 
-        tips = [str(rec.path)]
-        if rec.warnings:
-            tips.append("；".join(rec.warnings))
-        if rec.appid:
-            tips.insert(0, f"AppID {rec.appid}")
+        self.refresh_tooltip()
+
+    # ---------- 名称 ----------
+    def refresh_tooltip(self) -> None:
+        tips = [str(self.rec.path)]
+        if self.rec.out_title:
+            tips.insert(0, f"原文件夹名：{self.rec.title}")
+        if self.rec.warnings:
+            tips.append("；".join(self.rec.warnings))
+        if self.rec.appid:
+            tips.insert(0, f"AppID {self.rec.appid}")
         self.setToolTip("\n".join(tips))
+
+    def set_display_name(self, name: str) -> None:
+        """改过的名字立刻显示出来（不用重建整张列表）。"""
+        self.title.setText(name)
+        self.refresh_tooltip()
 
     # ---------- 封面 ----------
     def set_cover(self, pm: QPixmap) -> None:
@@ -152,6 +167,9 @@ class RecordingRow(QWidget):
     def mousePressEvent(self, ev) -> None:  # noqa: N802
         self.clickedRow.emit(self.key)
         super().mousePressEvent(ev)
+
+    def contextMenuEvent(self, ev) -> None:  # noqa: N802
+        self.menuRequested.emit(self.key, ev.globalPos())
 
 
 class EmptyClipsDialog(QDialog):
@@ -247,6 +265,7 @@ class LibraryPage(QWidget):
     scanRequested = Signal()
     pickFolderRequested = Signal()
     namingHelpRequested = Signal()            # 有 m4s 认不出时，用户点了「怎么改名」
+    renameRequested = Signal(list)            # list[Recording]，手动改输出名
 
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
@@ -330,6 +349,14 @@ class LibraryPage(QWidget):
         self.sel_info.setProperty("role", "meta")
         bar.addWidget(self.sel_info)
         bar.addStretch(1)
+        self.btn_rename = QPushButton("重命名")
+        self.btn_rename.setProperty("ghost", True)
+        self.btn_rename.setCursor(Qt.PointingHandCursor)
+        self.btn_rename.setFixedHeight(38)
+        self.btn_rename.setEnabled(False)
+        self.btn_rename.setToolTip("改导出文件的名字（可加时间戳）")
+        self.btn_rename.clicked.connect(lambda: self.renameRequested.emit(self.selected()))
+        bar.addWidget(self.btn_rename)
         self.btn_export_sel = QPushButton("导出所选")
         self.btn_export_sel.setProperty("accent", True)
         self.btn_export_sel.setCursor(Qt.PointingHandCursor)
@@ -440,7 +467,7 @@ class LibraryPage(QWidget):
         elif mode == 2:
             recs.sort(key=lambda r: r.size, reverse=True)
         else:
-            recs.sort(key=lambda r: r.title.lower())
+            recs.sort(key=lambda r: r.out_stem.lower())
 
         cur = self.current()
         self._cur_key = cur.key if cur else None
@@ -480,6 +507,7 @@ class LibraryPage(QWidget):
             row.toggled.connect(self._on_row_toggled)
             row.exportOne.connect(self._on_export_one)
             row.clickedRow.connect(self._on_row_clicked)
+            row.menuRequested.connect(self._on_row_menu)
             row.set_checked(rec.key in self._checked)
             self.list.setItemWidget(it, row)
             self._items[rec.key] = it
@@ -550,6 +578,55 @@ class LibraryPage(QWidget):
         if it is not None and self.list.currentItem() is not it:
             self.list.setCurrentItem(it)
 
+    # ---------- 重命名 ----------
+    def _rec_by_key(self, key: str) -> Recording | None:
+        for r in self._all:
+            if r.key == key:
+                return r
+        return None
+
+    def _on_row_menu(self, key: str, pos) -> None:
+        """右键：勾了多条就改这一批，否则只改点中的那一条。"""
+        rec = self._rec_by_key(key)
+        if rec is None:
+            return
+        targets = self.rename_targets(key)
+        menu = QMenu(self)
+        act_rename = menu.addAction("重命名…")
+        act_rename.setEnabled(bool(targets))
+        menu.addSeparator()
+        act_export = menu.addAction("导出这一条")
+        chosen = menu.exec(pos)
+        if chosen is act_rename:
+            self.renameRequested.emit(targets)
+        elif chosen is act_export:
+            self.exportOne.emit(key)
+
+    def rename_targets(self, key: str | None = None) -> list[Recording]:
+        """要改名的对象：这一条已被勾选、且勾了不止一条时，改整批。"""
+        if key:
+            rec = self._rec_by_key(key)
+            if rec is None:
+                return []
+            if key in self._checked and len(self._checked) > 1:
+                return self.selected()
+            return [rec]
+        cur = self.current()
+        if cur is not None:
+            if cur.key in self._checked and len(self._checked) > 1:
+                return self.selected()
+            return [cur]
+        return self.selected()
+
+    def refresh_names(self) -> None:
+        """重命名之后只换文字，不重建列表（勾选状态、滚动位置都不动）。"""
+        for key, row in self._rows.items():
+            row.set_display_name(row.rec.out_stem)
+        for rec in self._all:
+            it = self._items.get(rec.key)
+            if it is not None:
+                it.setData(ROLE_REC, rec)
+
     def _on_check_all(self) -> None:
         """全选只作用于**当前可见**的行：搜索后点全选，选中的是搜出来的这些。"""
         on = self.check_all.checkState() != Qt.Unchecked
@@ -569,6 +646,7 @@ class LibraryPage(QWidget):
         self.sel_info.setText(f"已选 {n} 项" if n else "未选择")
         self.btn_export_sel.setEnabled(n > 0)
         self.btn_export_sel.setText(f"导出所选（{n}）" if n else "导出所选")
+        self.btn_rename.setEnabled(n > 0)
         self.check_all.blockSignals(True)
         if shown_on == 0:
             self.check_all.setCheckState(Qt.Unchecked)
