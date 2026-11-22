@@ -110,7 +110,8 @@ temp file, read it back, write the final MP4. Throughput is therefore set by the
 the CPU only matters in the re-encode fallback.
 
 The estimates below are anchored on a **measured 570 MB clip merged in 1.23 s**
-(≈ 460 MB/s of output, PCIe 3.0 NVMe, source and destination on the same drive):
+(≈ 460 MB/s of output, PCIe 3.0 NVMe, source and destination on the same drive).
+Expect ±30%: OS caching, fragmentation and SLC-cache exhaustion all move the numbers:
 
 | Drive | Rated sequential R/W | Merge throughput (output) | 1 GB clip | 10 GB clip |
 |---|---|---|---|---|
@@ -122,7 +123,7 @@ The estimates below are anchored on a **measured 570 MB clip merged in 1.23 s**
 
 - 3.0 → 4.0 is roughly 1.7×, 4.0 → 5.0 only about 1.5×: the bottleneck moves from the drive to ffmpeg's muxing and syscalls, so a faster drive never gets saturated.
 - Keeping source and output on two different drives lets reads and writes overlap — typically 20–40% faster; on one drive they queue behind each other.
-- Times cover the whole export (manifest and segment headers included). Scanning hundreds of clips is a separate job and takes seconds.
+- Times cover the merge itself (reading segments, writing the temp file, muxing). Scanning hundreds of clips is a separate job and takes seconds.
 
 **Re-encode fallback** (only when stream copy fails) barely touches the disk; it is CPU-bound:
 1080p60 runs at ~150 fps on an 8-core desktop CPU (≈ 2.5× realtime), so a 10-minute clip takes
