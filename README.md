@@ -136,7 +136,7 @@ H.264 码流一个字节都没有动。因此画质与原始录制逐帧一致�
 
 ## 安装
 
-1. 下载 `M4SMerge-win64-portable.zip`，解压到任意目录（例如 `D:\Tools\M4SMerge`）
+1. 到 [Releases](https://github.com/stuwjn/M4SMerge/releases/latest) 下载 `M4SMerge-win64-portable.zip`，解压到任意目录（例如 `D:\Tools\M4SMerge`）
 2. 双击 `M4SMerge.exe`
 
 免安装、不需要管理员权限、不需要单独装 FFmpeg —— 包里已带 `ffmpeg.exe` / `ffprobe.exe`。

@@ -145,7 +145,7 @@ ffprobe reports the same duration as the manifest.
 
 ## Install
 
-1. Download `M4SMerge-win64-portable.zip` and extract it anywhere (e.g. `D:\Tools\M4SMerge`)
+1. Download `M4SMerge-win64-portable.zip` from [Releases](https://github.com/stuwjn/M4SMerge/releases/latest) and extract it anywhere (e.g. `D:\Tools\M4SMerge`)
 2. Run `M4SMerge.exe`
 
 No installer, no admin rights, no separate FFmpeg — `ffmpeg.exe` and `ffprobe.exe` are bundled.
