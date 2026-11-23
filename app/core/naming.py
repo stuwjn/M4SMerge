@@ -107,6 +107,18 @@ def compose_out_name(base: str, ts: float, with_stamp: bool, maxlen: int = 100) 
     return f"{safe_filename(base, room)}{STAMP_JOIN}{stamp}"
 
 
+def rec_stamp(rec) -> float:
+    """这条剪辑打时间戳用的时间。
+
+    优先 `Recording.stamp_time`（thumbnail.jpg 的文件时间），
+    没有就退回 `mtime`——测试夹具、单文件素材都可能没有封面。
+    """
+    ts = getattr(rec, "stamp_time", None)
+    if isinstance(ts, (int, float)) and ts > 0:
+        return float(ts)
+    return float(getattr(rec, "mtime", 0.0) or 0.0)
+
+
 def plan_out_names(recs: Iterable, base: str, with_stamp: bool,
                    maxlen: int = 100) -> dict[str, str]:
     """一批剪辑的输出名：名称共用，时间各用各的，撞名自动补 -2。
@@ -116,9 +128,8 @@ def plan_out_names(recs: Iterable, base: str, with_stamp: bool,
     """
     out: dict[str, str] = {}
     used: set[str] = set()
-    for rec in sorted(recs, key=lambda r: (getattr(r, "mtime", 0.0),
-                                           getattr(r, "title", ""))):
-        name = compose_out_name(base, getattr(rec, "mtime", 0.0), with_stamp, maxlen)
+    for rec in sorted(recs, key=lambda r: (rec_stamp(r), getattr(r, "title", ""))):
+        name = compose_out_name(base, rec_stamp(rec), with_stamp, maxlen)
         if name in used:
             for i in range(2, 1000):
                 cand = f"{name}-{i}"

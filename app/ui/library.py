@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (QAbstractItemView, QCheckBox, QComboBox, QDialog,
                                QMenu, QPushButton, QSizePolicy, QVBoxLayout,
                                QWidget)
 
+from ..core.naming import stamp_text
 from ..core.recording import Recording
 from ..core.utils import human_duration
 from . import theme
@@ -113,6 +114,8 @@ class RecordingRow(QWidget):
             tips.append("；".join(self.rec.warnings))
         if self.rec.appid:
             tips.insert(0, f"AppID {self.rec.appid}")
+        if self.rec.stamp:
+            tips.append(f"封面时间：{stamp_text(self.rec.stamp)}（打时间戳用这个）")
         self.setToolTip("\n".join(tips))
 
     def set_display_name(self, name: str) -> None:

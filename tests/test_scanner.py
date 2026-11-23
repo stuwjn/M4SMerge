@@ -17,6 +17,7 @@ import os
 import sys
 import tempfile
 import time
+from datetime import datetime
 from pathlib import Path
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
@@ -95,6 +96,23 @@ def main() -> int:
               str([t.kind for t in r2[0].tracks]))
         check("没有封面时为 None", r2[0].thumb is None)
         check("时长用分片数估算", r2[0].duration > 0, f"{r2[0].duration:.1f}s")
+
+    print()
+    print("--- 时间戳取封面时间 ---")
+    cover = make_clip(tmp / "stampcase", "clip_777_20250812_101500", seconds=3)
+    thumb = cover / "thumbnail.jpg"
+    if thumb.exists():
+        want = datetime(2026, 11, 22, 23, 0, 0).timestamp()
+        os.utime(thumb, (want, want))
+        r3 = Scanner(ff).scan([cover])
+        check("扫描后 stamp 等于封面时间",
+              bool(r3) and abs(r3[0].stamp - want) <= 1, str(r3[0].stamp if r3 else None))
+        check("stamp_time 优先用封面", bool(r3) and abs(r3[0].stamp_time - want) <= 1,
+              str(r3[0].stamp_time if r3 else None))
+        check("分片时间明显不同（证明确实没用分片）",
+              bool(r3) and abs(r3[0].mtime - want) > 60, str(r3[0].mtime if r3 else None))
+    else:
+        check("夹具应生成 thumbnail.jpg", False, str(thumb))
 
     print()
     print("--- 不该被当成剪辑的东西 ---")

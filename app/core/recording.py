@@ -57,11 +57,22 @@ class Recording:
     thumb: Path | None = None                  # thumbnail.jpg（Steam 现成的封面）
     appid: str = ""                            # 目录名里的 Steam AppID
     out_title: str = ""                        # 手动指定的输出名（不含扩展名，空=用目录名）
+    stamp: float = 0.0                         # 时间戳来源：thumbnail.jpg 的修改时间
 
     @property
     def out_stem(self) -> str:
         """导出时真正用的文件名主干：手改过的优先，否则沿用剪辑文件夹名。"""
         return (self.out_title or self.title).strip() or self.title
+
+    @property
+    def stamp_time(self) -> float:
+        """打时间戳用的时间：以 thumbnail.jpg 的文件时间为准，没有才退回分片时间。
+
+        Steam 写缩略图的时刻就是「这条剪辑生成」的时刻，比分片 mtime 稳：
+        分片是一次次追加写的，最后一片的时间可能比封面晚好几秒，
+        复制过文件夹的话两者又都会被改写——两害相权，封面最接近录制点。
+        """
+        return self.stamp or self.mtime
 
     @property
     def duration(self) -> float:

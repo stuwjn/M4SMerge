@@ -23,7 +23,7 @@ Steam's built-in game recording does not produce an MP4 file; it stores DASH fra
 ```
 Steam\userdata\<account>\gamerecordings\clips\
 └── clip_413150_20251118_214502\
-    ├── thumbnail.jpg            cover already rendered by Steam
+    ├── thumbnail.jpg            cover already rendered by Steam (its file time feeds the timestamp)
     ├── clip.pb                  metadata (not parsed by this app)
     └── video\fg_413150_20251118_214502\
         ├── session.mpd          DASH manifest
@@ -101,7 +101,7 @@ itself made no concession to generic use — `scanner.py` still only understands
 | **No overwrites** | Name collisions get `-2`, `-3`, … Existing files are never replaced |
 | **No leftovers** | Intermediate files live only in the app's `temp`, deleted on finish or exit. The recording folder is never written to |
 | **Visible progress** | One card per export in the bottom-right corner; green fades after 3 s, red stays until dismissed |
-| **Name it your way** | Right-click or press `F2` to rename the output; tick the timestamp box and you get `Phantom Blade Zero - 2026-11-22 23-46-00.mp4`. A batch uses each clip's own recording time |
+| **Name it your way** | Tick the timestamp box and you get Steam-style naming, e.g. `Phantom Blade Zero - 2026-11-22 23-00-00.mp4`. A batch uses each clip's own time |
 
 ## Performance
 
@@ -200,8 +200,9 @@ No installer, no admin rights, no separate FFmpeg — `ffmpeg.exe` and `ffprobe.
 **Rename the output**: right-click any row → **重命名… (Rename…)**, press `F2`, or tick several
 clips and use **重命名** in the bulk bar.
 
-- Type a name and tick **加上时间戳 (add timestamp)** to get `Phantom Blade Zero - 2026-11-22 23-46-00.mp4`
-- With several clips selected the name is shared and each clip uses its own recording time; identical seconds get `-2`, so nothing is overwritten
+- Type a name and tick **加上时间戳 (add timestamp)** to get Steam-style naming, e.g. `Phantom Blade Zero - 2026-11-22 23-00-00.mp4`
+- The time comes from each clip's `thumbnail.jpg` file time (the moment Steam wrote the cover, to the second); clips without a cover fall back to their segment time
+- With several clips selected the name is shared and each clip uses its own cover time; identical seconds get `-2`, so nothing is overwritten
 - Names are stored in the config and survive refresh and restart; **用回文件夹名 (use the folder name)** resets them
 - Only the output file name changes — the recording folder is never touched
 

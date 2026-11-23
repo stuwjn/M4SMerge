@@ -207,7 +207,7 @@ class RenameDialog(QDialog):
     """手动给输出文件起名：名称 + 可选时间戳。
 
     只改**输出文件名**，剪辑目录一个字节都不动（原目录是只读的）。
-    多选时一次改一批：名称共用，时间戳各取各自剪辑的保存时间，
+    多选时一次改一批：名称共用，时间戳各取各自剪辑封面的时间，
     例如 `影之刃零 - 2026-11-22 23-46-00.mp4`。
     """
 
@@ -306,7 +306,7 @@ class RenameDialog(QDialog):
             if w is not None:
                 w.deleteLater()
         # 按时间排：最早的一条拿原名，后面的才带 -2，读起来符合直觉
-        ordered = sorted(self.recs, key=lambda r: (r.mtime, r.title))
+        ordered = sorted(self.recs, key=lambda r: (naming.rec_stamp(r), r.title))
         for rec in ordered[:self.MAX_PREVIEW]:
             name = planned.get(rec.key, "")
             lb = ElidedLabel(f"{name}.mp4" if name else "—")
@@ -322,9 +322,9 @@ class RenameDialog(QDialog):
         self.preview.setVisible(bool(self.recs))
 
         if stamp and base:
-            self.stamp_hint.setText("时间取这条剪辑的保存时间；同一批多选，各用各自的时间。")
+            self.stamp_hint.setText("时间取这条剪辑 thumbnail.jpg 的文件时间；同一批多选，各用各自的时间。")
         elif stamp:
-            self.stamp_hint.setText("时间取这条剪辑的保存时间，格式 2026-11-22 23-46-00。")
+            self.stamp_hint.setText("时间取这条剪辑 thumbnail.jpg 的文件时间，格式 2026-11-22 23-46-00。")
         else:
             self.stamp_hint.setText("不勾时间戳就只用上面的名称；重名时自动加 -2、-3。")
 

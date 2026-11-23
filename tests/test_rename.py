@@ -19,7 +19,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from PySide6.QtWidgets import QApplication  # noqa: E402
 
 from app.core.export import build_output_path  # noqa: E402
-from app.core.naming import compose_out_name, stamp_text  # noqa: E402
+from app.core.naming import compose_out_name, plan_out_names, stamp_text  # noqa: E402
 from app.core.recording import Recording  # noqa: E402
 from app.ui import theme  # noqa: E402
 from app.ui.dialogs import RenameDialog  # noqa: E402
@@ -37,9 +37,10 @@ def check(name: str, cond: bool, detail: str = "") -> None:
         failures.append(name)
 
 
-def rec(title: str = "clip_413150_20251118_214502", mtime: float = T0, key: str = "") -> Recording:
+def rec(title: str = "clip_413150_20251118_214502", mtime: float = T0, key: str = "",
+        stamp: float = 0.0) -> Recording:
     return Recording(key=key or title, path=Path("/x") / title, kind="dash",
-                     title=title, mtime=mtime)
+                     title=title, mtime=mtime, stamp=stamp)
 
 
 def main() -> int:
@@ -63,6 +64,20 @@ def main() -> int:
     check("超长名称截断后时间戳仍然完整", got.endswith(" - 2026-11-22 23-46-00"), got[-24:])
     check("截断后总长不超 100", len(got) <= 100, str(len(got)))
     check("空名称退回占位名", compose_out_name("", T0, False) == "clip")
+
+    print()
+    print("--- 时间取封面（thumbnail.jpg） ---")
+    # 分片时间比封面晚一小时：命名必须用封面时间
+    r_cover = rec(key="c1", mtime=T0 + 3600, stamp=T0)
+    check("有封面时间 → 用封面",
+          compose_out_name("影之刃零", r_cover.stamp_time, True) == "影之刃零 - 2026-11-22 23-46-00",
+          stamp_text(r_cover.stamp_time))
+    r_no = rec(key="c2", mtime=T0, stamp=0.0)
+    check("没封面 → 退回分片时间", r_no.stamp_time == T0, stamp_text(r_no.stamp_time))
+    planned = plan_out_names([r_cover, r_no], "影之刃零", True)
+    check("批量各用各自时间，同秒撞名 -2",
+          planned.get("c1") == "影之刃零 - 2026-11-22 23-46-00"
+          and planned.get("c2") == "影之刃零 - 2026-11-22 23-46-00-2", str(planned))
 
     print()
     print("--- 输出名优先级 ---")

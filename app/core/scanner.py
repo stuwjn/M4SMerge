@@ -396,6 +396,15 @@ def analyze_clip(clip_dir: Path, ff: FFmpeg) -> Recording | None:
     if len(tracks) < 2:
         warnings.append("只有单轨，导出可能没有声音")
 
+    # 重命名用的时间戳以封面为准：Steam 写 thumbnail.jpg 的那一刻就是剪辑生成时刻
+    thumb = _thumb_for(clip_dir)
+    stamp = 0.0
+    if thumb is not None:
+        try:
+            stamp = thumb.stat().st_mtime
+        except OSError:
+            stamp = 0.0
+
     return Recording(
         key=make_key(clip_dir),
         path=clip_dir,
@@ -407,8 +416,9 @@ def analyze_clip(clip_dir: Path, ff: FFmpeg) -> Recording | None:
         mpd=mpd,
         warnings=warnings,
         declared_duration=declared,
-        thumb=_thumb_for(clip_dir),
+        thumb=thumb,
         appid=_appid_of(clip_dir.name),
+        stamp=stamp,
     )
 
 
